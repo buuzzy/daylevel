@@ -525,7 +525,9 @@ if __name__ == "__main__":
     try:
         # mcp.run() # Commented out original MCP run
         print("DEBUG: Attempting to start uvicorn server...", file=sys.stderr, flush=True)
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+        # 使用环境变量PORT，以便与Cloud Run兼容
+        port = int(os.environ.get("PORT", 8000))
+        uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
         print("DEBUG: uvicorn.run() completed (should not happen if server runs indefinitely).", file=sys.stderr, flush=True)
     except Exception as e_run:
         print(f"DEBUG: ERROR during uvicorn.run(): {e_run}", file=sys.stderr, flush=True)

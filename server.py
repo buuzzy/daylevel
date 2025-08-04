@@ -206,6 +206,61 @@ def set_tushare_token(token: str):
 
 # --- End of Core Token Management Functions ---
 
+# 添加setup_tushare_token函数
+@mcp.tool()
+def setup_tushare_token(token: str) -> str:
+    """
+    配置Tushare API Token
+
+    参数:
+        token: Tushare API Token
+    """
+    print(f"DEBUG: Tool setup_tushare_token called with token: {'********' if token else 'None'}", file=sys.stderr, flush=True)
+    if not token:
+        return "错误：请提供有效的Tushare API Token"
+    
+    try:
+        set_tushare_token(token)
+        # 验证token是否有效
+        pro = ts.pro_api(token)
+        # 尝试一个简单的API调用来验证token
+        df = pro.stock_basic(limit=1)
+        if df is not None and not df.empty:
+            return "Tushare API Token配置成功！"
+        else:
+            return "警告：Token已设置，但可能无效。请检查Token是否正确。"
+    except Exception as e:
+        print(f"DEBUG: ERROR in setup_tushare_token: {str(e)}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        return f"设置Token失败：{str(e)}"
+
+@mcp.tool()
+def check_token_status() -> str:
+    """
+    检查Tushare API Token的状态
+    
+    返回:
+        str: Token状态信息
+    """
+    print(f"DEBUG: Tool check_token_status called", file=sys.stderr, flush=True)
+    try:
+        token = get_tushare_token()
+        if not token:
+            return "未配置Tushare API Token。请使用setup_tushare_token工具配置Token。"
+        
+        # 验证token是否有效
+        pro = ts.pro_api(token)
+        # 尝试一个简单的API调用来验证token
+        df = pro.stock_basic(limit=1)
+        if df is not None and not df.empty:
+            return f"Tushare API Token状态正常，可以使用。Token: {'*' * 4 + token[-4:] if len(token) > 4 else '****'}"
+        else:
+            return "警告：Token已配置，但可能无效。请检查Token是否正确。"
+    except Exception as e:
+        print(f"DEBUG: ERROR in check_token_status: {str(e)}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        return f"检查Token状态失败：{str(e)}"
+
 # Tools and Prompts will be added here one by one from refer/server.py
 
 # 删除了其他mcp工具，仅保留get_start_date_for_n_days、search_stocks和get_daily_prices三个工具

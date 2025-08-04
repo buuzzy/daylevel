@@ -293,11 +293,51 @@ def get_start_date_for_n_days(end_date: str, days_ago: int = 80) -> str:
         return f"计算起始日期失败：{str(e)}"
 
 # --- SSE Integration ---
-@app.get("/sse")
-async def sse_endpoint(request: Request):
-    transport = SseServerTransport(request)
-    await mcp.handle_request(transport)
-    return transport.response
+# 定义MCP SSE集成的基础路径
+MCP_BASE_PATH = "/sse"
+
+print(f"DEBUG: Applying MCP SSE integration for base path: {MCP_BASE_PATH}", file=sys.stderr, flush=True)
+
+try:
+    # 初始化SseServerTransport
+    # messages_endpoint_path是客户端将被告知发送消息的路径
+    # 这个路径应该是完整路径，包括我们的基础路径
+    messages_full_path = f"{MCP_BASE_PATH}/messages/"
+    sse_transport = SseServerTransport(messages_full_path)
+    print(f"DEBUG: SseServerTransport initialized; client will be told messages are at: {messages_full_path}", file=sys.stderr, flush=True)
+
+    async def handle_mcp_sse_handshake(request: Request) -> None:
+        """处理来自客户端的初始SSE握手。"""
+        print(f"DEBUG: MCP SSE handshake request received for: {request.url}", file=sys.stderr, flush=True)
+        # request._send是一个受保护的成员
+        async with sse_transport.connect_sse(
+            request.scope,
+            request.receive,
+            request._send, # type: ignore 
+        ) as (read_stream, write_stream):
+            print(f"DEBUG: MCP SSE connection established for {MCP_BASE_PATH}. Starting McpServer.run.", file=sys.stderr, flush=True)
+            # mcp是我们的FastMCP实例，_mcp_server是其底层的McpServer
+            await mcp._mcp_server.run(
+                read_stream,
+                write_stream,
+                mcp._mcp_server.create_initialization_options(),
+            )
+            print(f"DEBUG: McpServer.run finished for {MCP_BASE_PATH}.", file=sys.stderr, flush=True)
+
+    # 添加SSE握手的路由
+    # 客户端将向此端点发出GET请求以启动SSE连接
+    app.add_route(MCP_BASE_PATH, handle_mcp_sse_handshake, methods=["GET"])
+    print(f"DEBUG: MCP SSE handshake GET route added at: {MCP_BASE_PATH}", file=sys.stderr, flush=True)
+
+    # 挂载sse_transport的ASGI应用以处理POST消息
+    app.mount(messages_full_path, sse_transport.handle_post_message)
+    print(f"DEBUG: MCP SSE messages POST endpoint mounted at: {messages_full_path}", file=sys.stderr, flush=True)
+
+    print(f"DEBUG: MCP SSE integration for base path {MCP_BASE_PATH} applied successfully.", file=sys.stderr, flush=True)
+
+except Exception as e_integration:
+    print(f"DEBUG: CRITICAL ERROR applying MCP SSE integration: {str(e_integration)}", file=sys.stderr, flush=True)
+    traceback.print_exc(file=sys.stderr)
 
 # --- Initialize Tushare Token on Startup ---
 @app.on_event("startup")

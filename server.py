@@ -532,6 +532,376 @@ def get_trade_calendar(exchange: str = '', start_date: str = None, end_date: str
         return f"获取交易日历失败: {str(e)}"
 
 @mcp.tool()
+def get_weekly_prices(ts_code: str = None, trade_date: str = None, start_date: str = None, end_date: str = None) -> str:
+    """
+    获取A股周线行情数据
+
+    参数:
+        ts_code: TS代码（ts_code和trade_date两个参数任选一）
+        trade_date: 交易日期（每周最后一个交易日期，YYYYMMDD格式）
+        start_date: 开始日期
+        end_date: 结束日期
+    """
+    print(f"DEBUG: Tool get_weekly_prices called with ts_code='{ts_code}', trade_date='{trade_date}', start_date='{start_date}', end_date='{end_date}'.", file=sys.stderr, flush=True)
+    token_value = get_tushare_token()
+    if not token_value:
+        return "错误：Tushare token 未配置或无法获取。请使用 setup_tushare_token 配置。"
+    
+    try:
+        pro = ts.pro_api(token_value)
+        query_params = {}
+        
+        # 设置查询参数
+        if ts_code:
+            query_params['ts_code'] = ts_code
+        if trade_date:
+            query_params['trade_date'] = trade_date
+        if start_date:
+            query_params['start_date'] = start_date
+        if end_date:
+            query_params['end_date'] = end_date
+            
+        # 检查必要参数
+        if not ts_code and not trade_date:
+            return "错误：必须提供ts_code或trade_date参数之一"
+            
+        # 调用weekly接口获取周线数据
+        df = pro.weekly(**query_params)
+        
+        if df.empty:
+            return "未找到符合条件的周线数据"
+            
+        # 限制结果数量，避免输出过长
+        if len(df) > 20:
+            df = df.head(20)
+            show_limit_warning = True
+        else:
+            show_limit_warning = False
+            
+        # 格式化输出结果
+        results = []
+        
+        # 如果是查询单个股票的多个交易周期
+        if ts_code and not trade_date:
+            stock_name = _get_stock_name(ts_code, pro)
+            results.append(f"--- {ts_code} {stock_name} 周线行情 ---")
+            
+            for _, row in df.iterrows():
+                results.append(f"交易日期: {row.get('trade_date', 'N/A')}")
+                
+                # 定义要显示的字段及其标签
+                fields_to_display = [
+                    ('open', '开盘价'),
+                    ('high', '最高价'),
+                    ('low', '最低价'),
+                    ('close', '收盘价'),
+                    ('pre_close', '上周收盘价'),
+                    ('change', '周涨跌额'),
+                    ('pct_chg', '周涨跌幅(%)'),
+                    ('vol', '成交量'),
+                    ('amount', '成交额')
+                ]
+                
+                for field, label in fields_to_display:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            numeric_value = pd.to_numeric(row[field])
+                            if field == 'vol':
+                                unit = '手'
+                                results.append(f"  {label}: {numeric_value:,.0f} {unit}")
+                            elif field == 'amount':
+                                unit = '千元'
+                                results.append(f"  {label}: {numeric_value:,.2f} {unit}")
+                            elif field == 'pct_chg':
+                                results.append(f"  {label}: {numeric_value:.2f}%")
+                            else:
+                                unit = '元'
+                                results.append(f"  {label}: {numeric_value:.2f} {unit}")
+                        except (ValueError, TypeError):
+                            results.append(f"  {label}: (值非数字: {row[field]})")
+                    else:
+                        results.append(f"  {label}: 未提供")
+                results.append("------------------------")
+        
+        # 如果是查询特定交易日期的多个股票
+        elif trade_date and not ts_code:
+            results.append(f"--- {trade_date} 交易日周线行情 ---")
+            
+            for _, row in df.iterrows():
+                current_ts_code = row.get('ts_code', 'N/A')
+                stock_name = _get_stock_name(current_ts_code, pro)
+                results.append(f"{current_ts_code} {stock_name}:")
+                
+                # 定义要显示的字段及其标签
+                fields_to_display = [
+                    ('open', '开盘价'),
+                    ('high', '最高价'),
+                    ('low', '最低价'),
+                    ('close', '收盘价'),
+                    ('pre_close', '上周收盘价'),
+                    ('change', '周涨跌额'),
+                    ('pct_chg', '周涨跌幅(%)'),
+                    ('vol', '成交量'),
+                    ('amount', '成交额')
+                ]
+                
+                for field, label in fields_to_display:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            numeric_value = pd.to_numeric(row[field])
+                            if field == 'vol':
+                                unit = '手'
+                                results.append(f"  {label}: {numeric_value:,.0f} {unit}")
+                            elif field == 'amount':
+                                unit = '千元'
+                                results.append(f"  {label}: {numeric_value:,.2f} {unit}")
+                            elif field == 'pct_chg':
+                                results.append(f"  {label}: {numeric_value:.2f}%")
+                            else:
+                                unit = '元'
+                                results.append(f"  {label}: {numeric_value:.2f} {unit}")
+                        except (ValueError, TypeError):
+                            results.append(f"  {label}: (值非数字: {row[field]})")
+                    else:
+                        results.append(f"  {label}: 未提供")
+                results.append("------------------------")
+        
+        # 如果是查询特定股票的特定交易日期
+        else:
+            stock_name = _get_stock_name(ts_code, pro)
+            results.append(f"--- {ts_code} {stock_name} {trade_date} 周线行情 ---")
+            
+            if not df.empty:
+                row = df.iloc[0]
+                
+                # 定义要显示的字段及其标签
+                fields_to_display = [
+                    ('open', '开盘价'),
+                    ('high', '最高价'),
+                    ('low', '最低价'),
+                    ('close', '收盘价'),
+                    ('pre_close', '上周收盘价'),
+                    ('change', '周涨跌额'),
+                    ('pct_chg', '周涨跌幅(%)'),
+                    ('vol', '成交量'),
+                    ('amount', '成交额')
+                ]
+                
+                for field, label in fields_to_display:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            numeric_value = pd.to_numeric(row[field])
+                            if field == 'vol':
+                                unit = '手'
+                                results.append(f"  {label}: {numeric_value:,.0f} {unit}")
+                            elif field == 'amount':
+                                unit = '千元'
+                                results.append(f"  {label}: {numeric_value:,.2f} {unit}")
+                            elif field == 'pct_chg':
+                                results.append(f"  {label}: {numeric_value:.2f}%")
+                            else:
+                                unit = '元'
+                                results.append(f"  {label}: {numeric_value:.2f} {unit}")
+                        except (ValueError, TypeError):
+                            results.append(f"  {label}: (值非数字: {row[field]})")
+                    else:
+                        results.append(f"  {label}: 未提供")
+        
+        if show_limit_warning:
+            results.append(f"注意: 结果超过20条，仅显示前20条。请缩小日期范围以获取更精确的结果。")
+            
+        return "\n".join(results)
+    except Exception as e:
+        print(f"DEBUG: ERROR in get_weekly_prices: {str(e)}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        return f"获取周线行情数据失败：{str(e)}"
+
+@mcp.tool()
+def get_monthly_prices(ts_code: str = None, trade_date: str = None, start_date: str = None, end_date: str = None) -> str:
+    """
+    获取A股月线行情数据
+
+    参数:
+        ts_code: TS代码（ts_code和trade_date两个参数任选一）
+        trade_date: 交易日期（每月最后一个交易日日期，YYYYMMDD格式）
+        start_date: 开始日期
+        end_date: 结束日期
+    """
+    print(f"DEBUG: Tool get_monthly_prices called with ts_code='{ts_code}', trade_date='{trade_date}', start_date='{start_date}', end_date='{end_date}'.", file=sys.stderr, flush=True)
+    token_value = get_tushare_token()
+    if not token_value:
+        return "错误：Tushare token 未配置或无法获取。请使用 setup_tushare_token 配置。"
+    
+    try:
+        pro = ts.pro_api(token_value)
+        query_params = {}
+        
+        # 设置查询参数
+        if ts_code:
+            query_params['ts_code'] = ts_code
+        if trade_date:
+            query_params['trade_date'] = trade_date
+        if start_date:
+            query_params['start_date'] = start_date
+        if end_date:
+            query_params['end_date'] = end_date
+            
+        # 检查必要参数
+        if not ts_code and not trade_date:
+            return "错误：必须提供ts_code或trade_date参数之一"
+            
+        # 调用monthly接口获取月线数据
+        df = pro.monthly(**query_params)
+        
+        if df.empty:
+            return "未找到符合条件的月线数据"
+            
+        # 限制结果数量，避免输出过长
+        if len(df) > 20:
+            df = df.head(20)
+            show_limit_warning = True
+        else:
+            show_limit_warning = False
+            
+        # 格式化输出结果
+        results = []
+        
+        # 如果是查询单个股票的多个交易月份
+        if ts_code and not trade_date:
+            stock_name = _get_stock_name(ts_code, pro)
+            results.append(f"--- {ts_code} {stock_name} 月线行情 ---")
+            
+            for _, row in df.iterrows():
+                results.append(f"交易日期: {row.get('trade_date', 'N/A')}")
+                
+                # 定义要显示的字段及其标签
+                fields_to_display = [
+                    ('open', '开盘价'),
+                    ('high', '最高价'),
+                    ('low', '最低价'),
+                    ('close', '收盘价'),
+                    ('pre_close', '上月收盘价'),
+                    ('change', '月涨跌额'),
+                    ('pct_chg', '月涨跌幅(%)'),
+                    ('vol', '成交量'),
+                    ('amount', '成交额')
+                ]
+                
+                for field, label in fields_to_display:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            numeric_value = pd.to_numeric(row[field])
+                            if field == 'vol':
+                                unit = '手'
+                                results.append(f"  {label}: {numeric_value:,.0f} {unit}")
+                            elif field == 'amount':
+                                unit = '千元'
+                                results.append(f"  {label}: {numeric_value:,.2f} {unit}")
+                            elif field == 'pct_chg':
+                                results.append(f"  {label}: {numeric_value:.2f}%")
+                            else:
+                                unit = '元'
+                                results.append(f"  {label}: {numeric_value:.2f} {unit}")
+                        except (ValueError, TypeError):
+                            results.append(f"  {label}: (值非数字: {row[field]})")
+                    else:
+                        results.append(f"  {label}: 未提供")
+                results.append("------------------------")
+        
+        # 如果是查询特定交易日期的多个股票
+        elif trade_date and not ts_code:
+            results.append(f"--- {trade_date} 交易日月线行情 ---")
+            
+            for _, row in df.iterrows():
+                current_ts_code = row.get('ts_code', 'N/A')
+                stock_name = _get_stock_name(current_ts_code, pro)
+                results.append(f"{current_ts_code} {stock_name}:")
+                
+                # 定义要显示的字段及其标签
+                fields_to_display = [
+                    ('open', '开盘价'),
+                    ('high', '最高价'),
+                    ('low', '最低价'),
+                    ('close', '收盘价'),
+                    ('pre_close', '上月收盘价'),
+                    ('change', '月涨跌额'),
+                    ('pct_chg', '月涨跌幅(%)'),
+                    ('vol', '成交量'),
+                    ('amount', '成交额')
+                ]
+                
+                for field, label in fields_to_display:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            numeric_value = pd.to_numeric(row[field])
+                            if field == 'vol':
+                                unit = '手'
+                                results.append(f"  {label}: {numeric_value:,.0f} {unit}")
+                            elif field == 'amount':
+                                unit = '千元'
+                                results.append(f"  {label}: {numeric_value:,.2f} {unit}")
+                            elif field == 'pct_chg':
+                                results.append(f"  {label}: {numeric_value:.2f}%")
+                            else:
+                                unit = '元'
+                                results.append(f"  {label}: {numeric_value:.2f} {unit}")
+                        except (ValueError, TypeError):
+                            results.append(f"  {label}: (值非数字: {row[field]})")
+                    else:
+                        results.append(f"  {label}: 未提供")
+                results.append("------------------------")
+        
+        # 如果是查询特定股票的特定交易日期
+        else:
+            stock_name = _get_stock_name(ts_code, pro)
+            results.append(f"--- {ts_code} {stock_name} {trade_date} 月线行情 ---")
+            
+            if not df.empty:
+                row = df.iloc[0]
+                
+                # 定义要显示的字段及其标签
+                fields_to_display = [
+                    ('open', '开盘价'),
+                    ('high', '最高价'),
+                    ('low', '最低价'),
+                    ('close', '收盘价'),
+                    ('pre_close', '上月收盘价'),
+                    ('change', '月涨跌额'),
+                    ('pct_chg', '月涨跌幅(%)'),
+                    ('vol', '成交量'),
+                    ('amount', '成交额')
+                ]
+                
+                for field, label in fields_to_display:
+                    if field in row and pd.notna(row[field]):
+                        try:
+                            numeric_value = pd.to_numeric(row[field])
+                            if field == 'vol':
+                                unit = '手'
+                                results.append(f"  {label}: {numeric_value:,.0f} {unit}")
+                            elif field == 'amount':
+                                unit = '千元'
+                                results.append(f"  {label}: {numeric_value:,.2f} {unit}")
+                            elif field == 'pct_chg':
+                                results.append(f"  {label}: {numeric_value:.2f}%")
+                            else:
+                                unit = '元'
+                                results.append(f"  {label}: {numeric_value:.2f} {unit}")
+                        except (ValueError, TypeError):
+                            results.append(f"  {label}: (值非数字: {row[field]})")
+                    else:
+                        results.append(f"  {label}: 未提供")
+        
+        if show_limit_warning:
+            results.append(f"注意: 结果超过20条，仅显示前20条。请缩小日期范围以获取更精确的结果。")
+            
+        return "\n".join(results)
+    except Exception as e:
+        print(f"DEBUG: ERROR in get_monthly_prices: {str(e)}", file=sys.stderr, flush=True)
+        traceback.print_exc(file=sys.stderr)
+        return f"获取月线行情数据失败：{str(e)}"
+
+@mcp.tool()
 def get_start_date_for_n_days(end_date: str, days_ago: int = 80) -> str:
     """
     根据结束日期和天数，获取Tushare交易日历上的起始日期。

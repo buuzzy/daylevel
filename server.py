@@ -1,7 +1,7 @@
 import os
 import sys
 import functools
-import traceback
+# import traceback  # <-- FIX 3: Removed unused import
 import logging
 from pathlib import Path
 from typing import Optional, Callable
@@ -35,6 +35,7 @@ def tushare_tool_handler(func: Callable) -> Callable:
         try:
             # 将 pro_api 实例作为第一个参数注入
             pro_api = ts.pro_api(token)
+            # Pass pro_api as the first positional argument
             return func(pro_api, *args, **kwargs)
         except Exception as e:
             logging.error(f"工具 {func.__name__} 执行出错: {e}", exc_info=True)
@@ -57,6 +58,7 @@ def init_env_file():
         ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
         if not ENV_FILE.exists():
             ENV_FILE.touch()
+        # Load env vars *after* ensuring the file exists
         load_dotenv(ENV_FILE)
     except Exception as e:
         logging.error(f"初始化 .env 文件失败: {e}", exc_info=True)
@@ -70,7 +72,9 @@ def set_tushare_token(token: str):
     """设置Tushare token"""
     init_env_file()
     try:
+        # Use set_key to write to the .env file
         set_key(ENV_FILE, "TUSHARE_TOKEN", token)
+        # Also set for the current tushare instance
         ts.set_token(token)
     except Exception as e:
         logging.error(f"设置 token 失败: {e}", exc_info=True)
@@ -90,6 +94,7 @@ def setup_tushare_token(token: str) -> str:
     try:
         set_tushare_token(token)
         pro = ts.pro_api(token)
+        # Test the token by making a simple call
         df = pro.stock_basic(limit=1)
         if not df.empty:
             logging.info("Tushare token 设置并验证成功。")
@@ -124,22 +129,26 @@ def check_token_status() -> str:
 
 @mcp.tool()
 @tushare_tool_handler
-def search_stocks(keyword: str) -> str:
+# --- FIX 1 (A): Added 'pro_api' as the first argument to receive it from the decorator ---
+def search_stocks(pro_api, keyword: str) -> str:
     """
     Search for stock information by keyword.
     
+    :param pro_api: (Injected by decorator) Tushare pro_api instance.
     :param keyword: The keyword to search for (stock code or name).
     :return: A formatted string of stock information.
     """
     try:
         logging.info(f"Searching for stock with keyword: {keyword}")
-        df = g.pro_api.stock_basic(
+        # --- FIX 1 (B): Changed 'g.pro_api' to 'pro_api' (the injected argument) ---
+        df = pro_api.stock_basic(
             exchange='',
             list_status='L',
             fields='ts_code,symbol,name,area,industry,list_date'
         )
 
         if keyword:
+            # Filter based on keyword
             df = df[
                 df['ts_code'].str.contains(keyword, case=False, na=False) |
                 df['name'].str.contains(keyword, case=False, na=False)
@@ -148,15 +157,14 @@ def search_stocks(keyword: str) -> str:
         if df.empty:
             return f"No stock found with keyword: {keyword}"
 
+        # Return results as a string
         return df.to_string(index=False)
     except Exception as e:
         logging.error(f"Error searching stocks for keyword '{keyword}': {e}", exc_info=True)
         return f"An error occurred while searching for stocks: {e}"
 
-@mcp_tool(
-    name="usage_guide",
-    description="Provide usage guide for this toolset."
-)
+# --- FIX 2: Changed from invalid 'mcp_tool' decorator to the correct '@mcp.prompt()' ---
+@mcp.prompt()
 def usage_guide() -> str:
     """提供此工具集的使用指南。"""
     return """欢迎使用 Tushare 股票查询工具！
@@ -189,18 +197,24 @@ async def api_setup_tushare_token(payload: dict = Body(...)):
     if not token:
         raise HTTPException(status_code=400, detail="Payload must include a 'token' key.")
     try:
+        # Call the existing MCP tool logic
         result = setup_tushare_token(token=token)
+        if "错误" in result or "失败" in result or "警告" in result:
+             raise HTTPException(status_code=400, detail=result)
         return {"status": "success", "message": result}
     except Exception as e:
+        # Catch exceptions from the tool call itself
+        logging.error(f"API setup_tushare_token failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- MCP SSE 集成 ---
+# --- MCP SSE 集成 (This section was already correct and matched code 1 & 2) ---
 MCP_BASE_PATH = "/sse"
 try:
     messages_full_path = f"{MCP_BASE_PATH}/messages/"
     sse_transport = SseServerTransport(messages_full_path)
 
     async def handle_mcp_sse_handshake(request: Request) -> None:
+        """Handle the MCP SSE handshake."""
         async with sse_transport.connect_sse(
             request.scope, request.receive, request._send
         ) as (read_stream, write_stream):
@@ -208,7 +222,9 @@ try:
                 read_stream, write_stream, mcp._mcp_server.create_initialization_options()
             )
 
+    # Register the handshake route
     app.add_route(MCP_BASE_PATH, handle_mcp_sse_handshake, methods=["GET"])
+    # Mount the message handling route
     app.mount(messages_full_path, sse_transport.handle_post_message)
     logging.info("MCP SSE 集成设置完成。")
 
@@ -217,6 +233,9 @@ except Exception as e:
     sys.exit(1)
 
 if __name__ == "__main__":
+    # Load token on startup, if it exists
+    init_env_file()
+    
     port = int(os.environ.get("PORT", 8000))
     logging.info(f"启动服务器，监听端口: {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

@@ -261,59 +261,6 @@ def check_token_status() -> str:
         traceback.print_exc(file=sys.stderr)
         return f"检查Token状态失败：{str(e)}"
 
-# Tools and Prompts will be added here one by one from refer/server.py
-
-# 删除了其他mcp工具，仅保留get_start_date_for_n_days、search_stocks和get_daily_prices三个工具
-
-    try:
-        pro = ts.pro_api(token_value)
-        query_params = {
-            'name': index_name,
-            'fields': 'ts_code,name,fullname,market,publisher,category,list_date'
-        }
-        if market:
-            query_params['market'] = market
-        if publisher:
-            query_params['publisher'] = publisher
-        if category:
-            query_params['category'] = category
-        
-        # The 'name' parameter in index_basic acts as a keyword search against 'name' and 'fullname'
-        # No need for complex df filtering if API handles keyword search well.
-        df = pro.index_basic(**query_params)
-
-        if df.empty:
-            return f"未找到与 '{index_name}'相关的指数。尝试更通用或精确的关键词，或检查市场/发布商/类别参数。"
-
-        results = [f"--- 指数搜索结果 for '{index_name}' ---"]
-        # Limit results to avoid overly long output, e.g., top 20 matches
-        # Sort by list_date (desc) and then ts_code to have some order if many results
-        df_sorted = df.sort_values(by=['list_date', 'ts_code'], ascending=[False, True]).head(20)
-
-        for _, row in df_sorted.iterrows():
-            info_parts = [
-                f"TS代码: {row.get('ts_code', 'N/A')}",
-                f"简称: {row.get('name', 'N/A')}",
-                f"全称: {row.get('fullname', 'N/A')}",
-                f"市场: {row.get('market', 'N/A')}",
-                f"发布方: {row.get('publisher', 'N/A')}",
-                f"类别: {row.get('category', 'N/A')}",
-                f"发布日期: {row.get('list_date', 'N/A')}"
-            ]
-            results.append("\n".join(info_parts))
-            results.append("------------------------")
-        
-        if len(df) > 20:
-            results.append(f"注意: 结果超过20条，仅显示前20条。请尝试使用 market, publisher 或 category 参数缩小范围。")
-
-        return "\n".join(results)
-
-    except Exception as e:
-        print(f"DEBUG: ERROR in search_index for '{index_name}': {str(e)}", file=sys.stderr, flush=True)
-        traceback.print_exc(file=sys.stderr)
-        return f"搜索指数 '{index_name}' 失败: {str(e)}"
-
-
 @mcp.tool()
 def search_stocks(keyword: str) -> str:
     """

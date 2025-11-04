@@ -128,34 +128,86 @@ def check_token_status() -> str:
         return f"检查 Token 状态失败: {str(e)}"
 
 @mcp.tool()
-@tushare_tool_handler
-# --- FIX 1 (A): Added 'pro_api' as the first argument to receive it from the decorator ---
-def search_stocks(pro_api, keyword: str) -> str:
+# --- FIX 1: Remove the decorator that caused the signature issue ---
+# @tushare_tool_handler
+# --- FIX 2: Correct the signature to only include user-provided arguments ---
+def search_stocks(keyword: str) -> str:
     """
-    Search for stock information by keyword.
+    Search for stock information by keyword (code, symbol, or name).
     
-    :param pro_api: (Injected by decorator) Tushare pro_api instance.
-    :param keyword: The keyword to search for (stock code or name).
+    :param keyword: The keyword to search for (e.g., "茅台", "600519", "000001.SZ").
     :return: A formatted string of stock information.
     """
+    # --- FIX 3: Move token/api handling logic inside the tool function ---
+    logging.info(f"调用工具: search_stocks，参数: {{'keyword': '{keyword}'}}")
+    token = get_tushare_token()
+    if not token:
+        return "错误：Tushare token 未配置或无法获取。请先使用 setup_tushare_token 配置。"
+    
+    try:
+        pro_api = ts.pro_api(token)
+    except Exception as e:
+        logging.error(f"Tushare API 初始化失败: {e}", exc_info=True)
+        return f"Tushare API 初始化失败: {str(e)}"
+    # --- End of FIX 3 ---
+
     try:
         logging.info(f"Searching for stock with keyword: {keyword}")
-        # --- FIX 1 (B): Changed 'g.pro_api' to 'pro_api' (the injected argument) ---
-        df = pro_api.stock_basic(
-            exchange='',
-            list_status='L',
-            fields='ts_code,symbol,name,area,industry,list_date'
-        )
+        
+        if not keyword:
+            return "错误：必须提供搜索关键词。"
 
-        if keyword:
-            # Filter based on keyword
-            df = df[
-                df['ts_code'].str.contains(keyword, case=False, na=False) |
-                df['name'].str.contains(keyword, case=False, na=False)
-            ]
+        df_list = []
 
+        # --- FIX 4: Optimized search logic based on Tushare docs ---
+        
+        # 1. Try searching by name (fuzzy match at API level)
+        try:
+            df_name = pro_api.stock_basic(name=keyword, list_status='L', fields='ts_code,symbol,name,area,industry,list_date')
+            if not df_name.empty:
+                df_list.append(df_name)
+        except Exception as e:
+            logging.warning(f"Error searching by name '{keyword}': {e}")
+
+        # 2. Try searching by ts_code (exact match at API level)
+        keyword_upper = keyword.upper()
+        if ".SZ" in keyword_upper or ".SH" in keyword_upper or ".BJ" in keyword_upper:
+            try:
+                df_ts_code = pro_api.stock_basic(ts_code=keyword, list_status='L', fields='ts_code,symbol,name,area,industry,list_date')
+                if not df_ts_code.empty:
+                    df_list.append(df_ts_code)
+            except Exception as e:
+                logging.warning(f"Error searching by ts_code '{keyword}': {e}")
+
+        # 3. Fallback: Get all and filter locally (for symbols like '600519' or partial names)
+        #    Only run if other searches yielded few results
+        if not df_list or len(df_list[0]) < 5:
+            try:
+                df_all = pro_api.stock_basic(
+                    exchange='',
+                    list_status='L',
+                    fields='ts_code,symbol,name,area,industry,list_date'
+                )
+                
+                df_filtered = df_all[
+                    df_all['ts_code'].str.contains(keyword, case=False, na=False) |
+                    df_all['name'].str.contains(keyword, case=False, na=False) |
+                    df_all['symbol'].str.contains(keyword, case=False, na=False)
+                ]
+                if not df_filtered.empty:
+                    df_list.append(df_filtered)
+            except Exception as e:
+                 logging.warning(f"Error during fallback search for '{keyword}': {e}")
+        
+        if not df_list:
+            return f"No stock found with keyword: {keyword}"
+
+        # Combine all results and remove duplicates
+        df = pd.concat(df_list).drop_duplicates(subset=['ts_code']).reset_index(drop=True)
+        
         if df.empty:
             return f"No stock found with keyword: {keyword}"
+        # --- End of FIX 4 ---
 
         # Return results as a string
         return df.to_string(index=False)
@@ -239,3 +291,4 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     logging.info(f"启动服务器，监听端口: {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
+

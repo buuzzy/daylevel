@@ -124,32 +124,39 @@ def check_token_status() -> str:
 
 @mcp.tool()
 @tushare_tool_handler
-def search_stocks(pro_api, keyword: str) -> str:
+def search_stocks(keyword: str) -> str:
     """
-    根据关键词（股票代码或名称）搜索股票。
-
-    参数:
-        pro_api: (由装饰器注入) Tushare pro API 实例。
-        keyword: 搜索关键词。
+    Search for stock information by keyword.
+    
+    :param keyword: The keyword to search for (stock code or name).
+    :return: A formatted string of stock information.
     """
-    df = pro_api.stock_basic(fields='ts_code,name,market,list_date')
-    mask = (df['ts_code'].str.contains(keyword, case=False, na=False)) | \
-           (df['name'].str.contains(keyword, case=False, na=False))
-    results_df = df[mask].head(20) # 限制最多返回20条结果
-    
-    if results_df.empty:
-        return f"未找到与 '{keyword}' 相关的股票。"
-        
-    output = [f"--- 股票搜索结果 for '{keyword}' ---"]
-    for _, row in results_df.iterrows():
-        output.append(f"{row['ts_code']} - {row['name']} (上市日期: {row['list_date']})")
-    
-    if len(df[mask]) > 20:
-        output.append("\n注意: 结果超过20条，仅显示前20条。请使用更精确的关键词。")
+    try:
+        logging.info(f"Searching for stock with keyword: {keyword}")
+        df = g.pro_api.stock_basic(
+            exchange='',
+            list_status='L',
+            fields='ts_code,symbol,name,area,industry,list_date'
+        )
 
-    return "\n".join(output)
+        if keyword:
+            df = df[
+                df['ts_code'].str.contains(keyword, case=False, na=False) |
+                df['name'].str.contains(keyword, case=False, na=False)
+            ]
 
-@mcp.prompt()
+        if df.empty:
+            return f"No stock found with keyword: {keyword}"
+
+        return df.to_string(index=False)
+    except Exception as e:
+        logging.error(f"Error searching stocks for keyword '{keyword}': {e}", exc_info=True)
+        return f"An error occurred while searching for stocks: {e}"
+
+@mcp_tool(
+    name="usage_guide",
+    description="Provide usage guide for this toolset."
+)
 def usage_guide() -> str:
     """提供此工具集的使用指南。"""
     return """欢迎使用 Tushare 股票查询工具！
